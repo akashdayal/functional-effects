@@ -52,10 +52,10 @@ object ZIOModel {
     // Akash: extract env
     def environment[R]: ZIO[R, Nothing, R] = ZIO(Right(_))
 
-    // Akash: succeed and apply f
+    // Akash: succeed and apply run2ZiosWith2Envs
     def access[R, A](f: R => A): ZIO[R, Nothing, A] = ZIO(r => Right(f(r)))
 
-    // Akash: effectfully apply f
+    // Akash: effectfully apply run2ZiosWith2Envs
     def accessM[R, E, A](f: R => ZIO[R, E, A]): ZIO[R, E, A] = ZIO(r => f(r).run(r))
   }
 
@@ -64,19 +64,37 @@ object ZIOModel {
    *
    * Implement all missing methods on the ZIO class.
    */
-  final case class ZIO[-R, +E, +A](run: R => Either[E, A]) { self =>
-    def map[B](f: A => B): ZIO[R, E, B] = ???
+  final case class ZIO[-R, +E, +A](run: R => Either[E, A]) {
+    self =>
+    def map[B](f: A => B): ZIO[R, E, B] = ZIO(r => run(r).map(f))
 
-    def flatMap[R1 <: R, E1 >: E, B](f: A => ZIO[R1, E1, B]): ZIO[R1, E1, B] =
-      ???
+    def flatMap[R1 <: R, E1 >: E, B](f: A => ZIO[R1, E1, B]): ZIO[R1, E1, B] = {
+      def runZioForEither(r: R): Either[E, A] = self.run(r)
 
-    def zip[R1 <: R, E1 >: E, B](that: ZIO[R1, E1, B]): ZIO[R1, E1, (A, B)] =
-      ???
+      def applyFToRight(r: R): Either[E, ZIO[R1, E1, B]] = runZioForEither(r).map(a => f(a))
 
-    def either: ZIO[R, Nothing, Either[E, A]] = ???
+      def runZio2ToReduceRightToB(r1: R1): Either[E1, B] = applyFToRight(r1).flatMap(newZio => newZio.run(r1))
 
-    def provide(r: R): ZIO[Any, E, A] = ???
+      ZIO(r => runZio2ToReduceRightToB(r))
 
+      // Akash: Compacts to below (I dont find it simple to think though)
+
+      ZIO(r => self.run(r).flatMap(a => f(a).run(r)))
+    }
+
+    def zip[R1 <: R, E1 >: E, B](that: ZIO[R1, E1, B]): ZIO[R1, E1, (A, B)] = {
+      for {
+        a <- self
+        b <- that
+      } yield (a, b)
+    }
+
+    def either: ZIO[R, Nothing, Either[E, A]] = ZIO(r => Right(self.run(r)))
+
+    // Akash: Replace env
+    def provide(r: R): ZIO[Any, E, A] = ZIO(_ => run(r))
+
+    // Akash: Run and throw error if any
     def orDie(implicit ev: E <:< Throwable): ZIO[R, Nothing, A] =
       ZIO(r => self.run(r).fold(throw _, Right(_)))
   }
