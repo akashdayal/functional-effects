@@ -2,6 +2,8 @@ package net.degoes.zio
 
 import zio._
 
+import scala.util.Try
+
 /*
  * INTRODUCTION
  *
@@ -40,17 +42,21 @@ object ZIOModel {
    * Implement all missing methods on the ZIO companion object.
    */
   object ZIO {
-    def succeed[A](a: => A): ZIO[Any, Nothing, A] = ???
+    def succeed[A](a: => A): ZIO[Any, Nothing, A] = ZIO(_ => Right(a))
 
-    def fail[E](e: => E): ZIO[Any, E, Nothing] = ???
+    def fail[E](e: => E): ZIO[Any, E, Nothing] = ZIO(_ => Left(e))
 
-    def effect[A](sideEffect: => A): ZIO[Any, Throwable, A] = ???
+    // Akash: extract result of side effect
+    def effect[A](sideEffect: => A): ZIO[Any, Throwable, A] = ZIO(_ => Try(sideEffect).toEither)
 
-    def environment[R]: ZIO[R, Nothing, R] = ???
+    // Akash: extract env
+    def environment[R]: ZIO[R, Nothing, R] = ZIO(Right(_))
 
-    def access[R, A](f: R => A): ZIO[R, Nothing, A] = ???
+    // Akash: succeed and apply f
+    def access[R, A](f: R => A): ZIO[R, Nothing, A] = ZIO(r => Right(f(r)))
 
-    def accessM[R, E, A](f: R => ZIO[R, E, A]): ZIO[R, E, A] = ???
+    // Akash: effectfully apply f
+    def accessM[R, E, A](f: R => ZIO[R, E, A]): ZIO[R, E, A] = ZIO(r => f(r).run(r))
   }
 
   /**
