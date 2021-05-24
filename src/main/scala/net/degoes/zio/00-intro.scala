@@ -12,7 +12,7 @@ import scala.util.Try
  *
  * The only effect type in ZIO is called ZIO, and has three type parameters,
  * which permit accessing context from an enviornment (`R`), failing with a
- * value of a certain type (`E`), and succeeding with a value of a certain
+ * zioToEither of a certain type (`E`), and succeeding with a zioToEither of a certain
  * type (`A`).
  *
  * Unlike Scala's Future, ZIO effects are completely lazy. All methods on ZIO
@@ -82,12 +82,11 @@ object ZIOModel {
       ZIO(r => self.run(r).flatMap(a => f(a).run(r)))
     }
 
-    def zip[R1 <: R, E1 >: E, B](that: ZIO[R1, E1, B]): ZIO[R1, E1, (A, B)] = {
+    def zip[R1 <: R, E1 >: E, B](that: ZIO[R1, E1, B]): ZIO[R1, E1, (A, B)] =
       for {
         a <- self
         b <- that
       } yield (a, b)
-    }
 
     def either: ZIO[R, Nothing, Either[E, A]] = ZIO(r => Right(self.run(r)))
 
@@ -114,9 +113,7 @@ object ZIOModel {
    */
   def main(args: Array[String]): Unit =
     unsafeRun {
-      putStrLn("Hello, what is your name?").flatMap(
-        _ => readLine.flatMap(name => putStrLn(s"Your name is: ${name}"))
-      )
+      putStrLn("Hello, what is your name?").flatMap(_ => readLine.flatMap(name => putStrLn(s"Your name is: ${name}")))
     }
 }
 
@@ -128,14 +125,17 @@ object ZIOTypes {
    *
    * Provide definitions for the ZIO type aliases below.
    */
-  type Task[+A]     = ???
-  type UIO[+A]      = ???
-  type RIO[-R, +A]  = ???
-  type IO[+E, +A]   = ???
-  type URIO[-R, +A] = ???
+  type Task[+A] = ZIO[Any, Throwable, A]
+  type UIO[+A]  = ZIO[Any, Nothing, A]
+
+  type RIO[-R, +A]  = ZIO[R, Throwable, A]
+  type URIO[-R, +A] = ZIO[R, Nothing, A] // Akash: Unfailable RIO
+
+  type IO[+E, +A] = ZIO[Any, E, A]
 }
 
 object SuccessEffect extends App {
+
   import zio.console._
 
   /**
@@ -145,10 +145,11 @@ object SuccessEffect extends App {
    * `ExitCode`.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    ???
+    ZIO.succeed(putStrLn("Success")).exitCode
 }
 
 object HelloWorld extends App {
+
   import zio.console._
 
   /**
@@ -159,10 +160,11 @@ object HelloWorld extends App {
    * effect into another one that produces an exit code.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    ???
+    putStrLn("Hello World!").exitCode
 }
 
 object SimpleMap extends App {
+
   import zio.console._
 
   val readLine = getStrLn.orDie
@@ -170,15 +172,16 @@ object SimpleMap extends App {
   /**
    * EXERCISE
    *
-   * Using `ZIO#map`, map the string success value of `readLine` into an
+   * Using `ZIO#map`, map the string success zioToEither of `readLine` into an
    * integer (the length of the string), and then further map that
    * into a constant exit code by using `ZIO#as`.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    ???
+    readLine.map(line => line.length).exitCode
 }
 
 object PrintSequenceZip extends App {
+
   import zio.console._
 
   /**
@@ -188,10 +191,11 @@ object PrintSequenceZip extends App {
    * that prints three lines of text to the console.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    ???
+    putStrLn("1").zip(putStrLn("2")).zip(putStrLn("3")).exitCode
 }
 
 object PrintSequence extends App {
+
   import zio.console._
 
   /**
@@ -201,10 +205,11 @@ object PrintSequence extends App {
    * produce an effect that prints three lines of text to the console.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    ???
+    (putStrLn("1") *> putStrLn("2") *> putStrLn("3")).exitCode
 }
 
 object PrintReadSequence extends App {
+
   import zio.console._
 
   val readLine = getStrLn.orDie
@@ -217,10 +222,11 @@ object PrintReadSequence extends App {
    * effect, which models reading a line of text from the console.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    ???
+    (putStrLn("Hit Enter to exit...") *> readLine).exitCode
 }
 
 object SimpleDuplication extends App {
+
   import zio.console._
 
   /**
@@ -228,19 +234,23 @@ object SimpleDuplication extends App {
    *
    * In the following program, the expression `putStrLn("Hello again")`
    * appears three times. Factor out this duplication by introducing a new
-   * value that stores the expression, and then referencing that variable
+   * zioToEither that stores the expression, and then referencing that variable
    * three times.
    */
-  def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    // val effect = ???
-    putStrLn("Hello") *>
-      putStrLn("Hello again") *>
-      putStrLn("Hello again") *>
-      putStrLn("Hello again") *>
-      ZIO.succeed(ExitCode.success)
+  def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] = {
+    // val effect = ??? {
+    val helloAgain = putStrLn("Hello again")
+
+    (putStrLn("Hello") *>
+      helloAgain *>
+      helloAgain *>
+      helloAgain *>
+      ZIO.succeed(ExitCode.success)).exitCode
+  }
 }
 
 object FlatMap extends App {
+
   import zio.console._
 
   val readLine = getStrLn.orDie
@@ -252,20 +262,20 @@ object FlatMap extends App {
    * read their name, then print their name back out to the user. However,
    * the `zipRight` (`*>`) operator is not powerful enough to solve this
    * problem, because it does not allow a _subsequent_ effect to depend
-   * on the success value produced by a _preceding_ effect.
+   * on the success zioToEither produced by a _preceding_ effect.
    *
    * Solve this problem by using the `ZIO#flatMap` operator, which composes
    * a first effect together with a "callback", which can return a second
-   * effect that depends on the success value produced by the first effect.
+   * effect that depends on the success zioToEither produced by the first effect.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    putStrLn("What is your name?") *>
-      readLine *> // Use .flatMap(...) here
-      putStrLn("Your name is: ") *>
-      ZIO.succeed(ExitCode.success)
+    putStrLn("What is your name?")
+      .flatMap(_ => readLine.flatMap(line => putStrLn(s"Your name is: $line")))
+      .exitCode
 }
 
 object PromptName extends App {
+
   import zio.console._
 
   val readLine = getStrLn.orDie
@@ -276,28 +286,32 @@ object PromptName extends App {
    * The following program uses a combination of `zipRight` (`*>`), and
    * `flatMap`. However, this makes the structure of the program harder
    * to understand. Replace all `zipRight` by `flatMap`, by ignoring the
-   * success value of the left hand effect.
+   * success zioToEither of the left hand effect.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    putStrLn("What is your name?") *>
-      readLine.flatMap(name => putStrLn(s"Your name is: ${name}")) *>
-      ZIO.succeed(ExitCode.success)
+    putStrLn("What is your name?")
+      .flatMap(_ =>
+        readLine
+          .flatMap(name => putStrLn(s"Your name is: ${name}"))
+          .flatMap(_ => ZIO.succeed(ExitCode.success))
+      )
 
   /**
    * EXERCISE
    *
    * Implement a generic "zipRight" that sequentially composes the two effects
-   * using `flatMap`, but which succeeds with the success value of the effect
+   * using `flatMap`, but which succeeds with the success zioToEither of the effect
    * on the right-hand side.
    */
   def myZipRight[R, E, A, B](
     left: ZIO[R, E, A],
     right: ZIO[R, E, B]
   ): ZIO[R, E, B] =
-    ???
+    left.flatMap(l => right)
 }
 
 object ForComprehension extends App {
+
   import zio.console._
 
   val readLine = getStrLn.orDie
@@ -310,12 +324,15 @@ object ForComprehension extends App {
    * except for the final line, which will be translated into a `map`.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    putStrLn("What is your name?").flatMap(
-      _ => readLine.flatMap(name => putStrLn(s"Your name is: ${name}").map(_ => ExitCode.success))
-    )
+    for {
+      _    <- putStrLn("What is your name?")
+      name <- readLine
+      _    <- putStrLn(s"Your name is: ${name}")
+    } yield ExitCode.success
 }
 
 object ForComprehensionBackward extends App {
+
   import zio.console._
 
   val readInt = getStrLn.flatMap(string => ZIO(string.toInt)).orDie
@@ -338,6 +355,7 @@ object ForComprehensionBackward extends App {
 }
 
 object NumberGuesser extends App {
+
   import zio.console._
   import zio.random._
 
@@ -355,7 +373,12 @@ object NumberGuesser extends App {
    * above.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    ???
+    for {
+      _      <- putStrLn("Guess a number? ")
+      guess  <- readLine
+      random <- nextInt
+      _      <- analyzeAnswer(random, guess)
+    } yield ExitCode.success
 }
 
 object SingleSideEffect extends App {
@@ -366,7 +389,7 @@ object SingleSideEffect extends App {
    * Using ZIO.effect, convert the side-effecting of `println` into a pure
    * functional effect.
    */
-  def myPrintLn(line: String): Task[Unit] = ???
+  def myPrintLn(line: String): Task[Unit] = ZIO.effect(println(line))
 
   def run(args: List[String]) =
     myPrintLn("Hello World!").exitCode
@@ -379,7 +402,7 @@ object MultipleSideEffects extends App {
    * into a functional effect, which describes the action of printing a line
    * of text to the console, but which does not actually perform the print.
    */
-  def putStrLn(line: String): Task[Unit] = ???
+  def putStrLn(line: String): Task[Unit] = ZIO.effect(println(line))
 
   /**
    * Using `ZIO.effect`, wrap Scala's `scala.io.StdIn.readLine()` method to
@@ -387,7 +410,7 @@ object MultipleSideEffects extends App {
    * of printing a line of text to the console, but which does not actually
    * perform the print.
    */
-  val getStrLn: Task[String] = ???
+  val getStrLn: Task[String] = ZIO.effect(scala.io.StdIn.readLine())
 
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
     (for {
