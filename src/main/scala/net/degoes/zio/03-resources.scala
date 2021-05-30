@@ -18,7 +18,7 @@ object Cat extends App {
    * blocking thread pool, storing the result into a string.
    */
   def readFile(file: String): ZIO[Blocking, IOException, String] =
-    ???
+    effectBlockingIO(scala.io.Source.fromFile(file).getLines().mkString(System.lineSeparator()))
 
   /**
    * EXERCISE
@@ -27,7 +27,11 @@ object Cat extends App {
    * contents of the specified file to standard output.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    ???
+    (for {
+      fn     <- getStrLn
+      output <- readFile(fn)
+      _      <- putStrLn(output)
+    } yield ()).exitCode
 }
 
 object CatEnsuring extends App {
@@ -52,7 +56,7 @@ object CatEnsuring extends App {
     ZIO.uninterruptible {
       for {
         source   <- open(file)
-        contents <- ZIO.effect(source.getLines().mkString("\n"))
+        contents <- ZIO.effect(source.getLines().mkString("\n")).ensuring(close(source).orDie)
       } yield contents
     }.refineToOrDie[IOException]
 
@@ -85,7 +89,7 @@ object CatBracket extends App {
    * fail to close the file, no matter what happens during reading.
    */
   def readFile(file: String): ZIO[Blocking, IOException, String] =
-    ???
+    open(file).bracket(close(_).orDie, source => effectBlockingIO(source.getLines().mkString("\n")))
 
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
     (for {
@@ -119,7 +123,7 @@ object SourceManaged extends App {
      */
     def make(file: String): ZManaged[Blocking, IOException, ZSource] = {
       // An effect that acquires the resource:
-      val open = effectBlocking(new ZSource(Source.fromFile(file)))
+      val open: ZIO[Blocking, IOException, ZSource] = effectBlocking(new ZSource(Source.fromFile(file)))
         .refineToOrDie[IOException]
 
       // A function that, when given the resource, returns an effect that
@@ -127,7 +131,7 @@ object SourceManaged extends App {
       val close: ZSource => ZIO[Blocking, Nothing, Unit] =
         _.execute(_.close()).orDie
 
-      ???
+      ZManaged.make(open)(close)
     }
   }
 
@@ -140,7 +144,10 @@ object SourceManaged extends App {
    */
   def readFiles(
     files: List[String]
-  ): ZIO[Blocking with Console, IOException, List[String]] = ???
+  ): ZIO[Blocking with Console, IOException, List[String]] =
+    ZManaged
+      .foreachPar(files)(ZSource.make)
+      .use(ZIO.foreach(_)(_.execute(_.getLines().mkString(System.lineSeparator()))))
 
   /**
    * EXERCISE
@@ -150,8 +157,10 @@ object SourceManaged extends App {
    * can all be opened simultaneously. Otherwise, don't print out
    * anything except an error message.
    */
-  def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    ???
+  def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] = {
+    val argg = List("/Users/akash/temp/test", "/Users/akash/temp/test-akash")
+    readFiles(argg).flatMap(ZIO.foreach(_)(putStrLn(_))).exitCode
+  }
 }
 
 object CatIncremental extends App {
@@ -189,7 +198,11 @@ object CatIncremental extends App {
    * a time, stopping when there are no more chunks left.
    */
   def cat(fh: FileHandle): ZIO[Blocking with Console, IOException, Unit] =
-    ???
+    fh.read.flatMap {
+      case None => ZIO.succeed()
+      case Some(chunk) =>
+        putStrLn(chunk.map(byte => byte.toChar).mkString("")) *> cat(fh)
+    }
 
   /**
    * EXERCISE
@@ -198,17 +211,19 @@ object CatIncremental extends App {
    * or `ZManaged` to ensure the file is closed in the event of error or
    * interruption.
    */
-  def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    args match {
-      case _ :: Nil =>
-        /**
-         * EXERCISE
-         *
-         * Open the specified file, safely create and use a file handle to
-         * incrementally dump the contents of the file to standard output.
-         */
-        ???
+  def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] = {
+    val argg = List("/Users/akash/temp/test")
+    argg match {
+
+      /**
+       * EXERCISE
+       *
+       * Open the specified file, safely create and use a file handle to
+       * incrementally dump the contents of the file to standard output.
+       */
+      case file :: _ => ZManaged.make(FileHandle.open(file))(_.close.orDie).use(cat).exitCode
 
       case _ => putStrLn("Usage: cat <file>") as ExitCode(2)
     }
+  }
 }
