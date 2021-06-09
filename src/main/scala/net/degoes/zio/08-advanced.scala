@@ -15,7 +15,8 @@ object PoolLocking extends App {
    * Using `ZIO#lock`, write an `onDatabase` combinator that runs the
    * specified effect on the database thread pool.
    */
-  def onDatabase[R, E, A](zio: ZIO[R, E, A]): ZIO[R, E, A] = ???
+  def onDatabase[R, E, A](zio: ZIO[R, E, A]): ZIO[R, E, A] =
+    ZIO.lock(dbPool)(zio)
 
   /**
    * EXERCISE
@@ -34,7 +35,11 @@ object PoolLocking extends App {
       println(s"Thread($id, $name, $groupName)")
     }
 
-    zio
+    for {
+      _ <- log
+      a <- zio
+      _ <- log
+    } yield a
   }
 
   /**
@@ -44,16 +49,15 @@ object PoolLocking extends App {
    * determine which threads are executing which effects.
    */
   def run(args: List[String]) =
-    putStrLn("Main") *>
-      onDatabase {
+    (putStrLn("Main") *>
+      threadLogged(onDatabase {
         putStrLn("Database") *>
-          blocking.blocking {
+          threadLogged(blocking.blocking {
             putStrLn("Blocking")
-          } *>
+          }) *>
           putStrLn("Database")
-      } *>
-      putStrLn("Main") *>
-      ZIO.succeed(ExitCode.success)
+      }) *>
+      putStrLn("Main")).exitCode
 }
 
 object Sharding extends App {
