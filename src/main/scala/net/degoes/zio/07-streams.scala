@@ -13,13 +13,13 @@ object ConsoleInput extends zio.App {
    * Using `ZStream.fromEffect` and `getStrLn`, construct a stream that
    * will emit a single string, taken from the console.
    */
-  val singleRead: ZStream[Console, IOException, String] = ???
+  val singleRead: ZStream[Console, IOException, String] = ZStream.fromEffect(getStrLn)
 
   /**
    * Using `ZStream#forever`, take the `singleRead` stream, and turn it into
    * a stream that repeats forever.
    */
-  val consoleInput: ZStream[Console, IOException, String] = ???
+  val consoleInput: ZStream[Console, IOException, String] = singleRead.forever
 
   sealed trait Command
   object Command {
@@ -53,13 +53,15 @@ object FileStream extends zio.App {
    *
    * Using `ZStream.fromFile`, construct a stream of bytes from a file.
    */
-  def open(file: String): ZStream[Blocking, Throwable, Byte] = ???
+  def open(file: String): ZStream[Blocking, Throwable, Byte] = ZStream.fromFile(new java.io.File(file).toPath)
 
-  def run(args: List[String]) =
-    (args match {
+  def run(args: List[String]) = {
+    val argg = List("build.sbt")
+    (argg match {
       case file :: Nil => open(file).foreach(byte => putStr(byte.toString()))
       case _           => putStrLn("Expected file name!")
     }).exitCode
+  }
 }
 
 /**
@@ -86,7 +88,7 @@ object StreamForeach extends zio.App {
    *
    * Using `ZStream#take`, take the first 100 numbers from the `fibonacci` stream.
    */
-  lazy val first100: ZStream[Any, Nothing, Int] = ???
+  lazy val first100: ZStream[Any, Nothing, Int] = fibonacci.take(100)
 
   /**
    * EXERCISE
@@ -95,7 +97,7 @@ object StreamForeach extends zio.App {
    * each of the first 100 fibonacci numbers.
    */
   def run(args: List[String]) =
-    ???
+    first100.foreach(fibo => putStrLn(fibo.toString)).exitCode
 }
 
 object StreamRunCollect extends zio.App {
@@ -122,7 +124,10 @@ object StreamRunCollect extends zio.App {
    * numbers from the stream `first100`, and print them out using `putStrLn`.
    */
   def run(args: List[String]) =
-    ???
+    (for {
+      fibos <- first100.runCollect
+      _     <- putStrLn(s"$fibos")
+    } yield ()).exitCode
 }
 
 /**
@@ -146,16 +151,18 @@ object FileTransducer extends zio.App {
    * stream of strings by using the `ZStream#>>>` method.
    */
   def open(file: String): ZStream[Blocking, Throwable, String] = {
-    val _ = FileStream.open(file)
-
-    ???
+    val fileStream = FileStream.open(file)
+    fileStream >>> ZTransducer.utf8Decode
   }
 
-  def run(args: List[String]) =
-    (args match {
+  def run(args: List[String]) = {
+    val argg = List("build.sbt")
+
+    (argg match {
       case file :: Nil => open(file).foreach(putStr(_))
       case _           => putStrLn("Expected file name!")
     }).exitCode
+  }
 }
 
 /**
@@ -181,16 +188,18 @@ object FileSink extends zio.App {
    * to copy a file from one location to another.
    */
   def copy(source: String, dest: String): ZIO[Blocking, Throwable, Any] = {
-    val _ = FileStream.open(source)
-
-    ???
+    val sourceStream = FileStream.open(source)
+    val sink         = ZSink.fromFile(new java.io.File(dest).toPath)
+    sourceStream.run(sink)
   }
 
-  def run(args: List[String]) =
-    (args match {
+  def run(args: List[String]) = {
+    val argg = List("build.sbt", "/tmp/build.sbt")
+    (argg match {
       case source :: dest :: Nil => copy(source, dest)
       case _                     => putStrLn("Expected source and dest name!")
     }).exitCode
+  }
 }
 
 /**
@@ -210,11 +219,23 @@ object FileSinkMapReduce extends zio.App {
    * Using `ZSink.fold`, create a custom sink that counts words in a file, and use that, together
    * with the other functionality you created or learned about, to implement a word count program.
    */
-  def wordCount(file: String): ZIO[Blocking, Throwable, Map[String, Int]] = ???
+  def wordCount(file: String): ZIO[Blocking, Throwable, Map[String, Int]] = {
+    val fileStream = FileStream.open(file)
+    val wordCountSink = ZSink.foldLeft[String, Map[String, Int]](Map[String, Int]()) {
+      case (accum, word) =>
+        accum.get(word) match {
+          case Some(count) => accum + (word -> (count + 1))
+          case None        => accum + (word -> 1)
+        }
+    }
+    (fileStream >>> ZTransducer.utf8Decode >>> ZTransducer.splitLines >>> ZTransducer.splitOn(" ")).run(wordCountSink)
+  }
 
-  def run(args: List[String]) =
-    (args match {
-      case file :: Nil => wordCount(file).flatMap(map => putStrLn(map.mkString))
+  def run(args: List[String]) = {
+    val argg = List("build.sbt")
+    (argg match {
+      case file :: Nil => wordCount(file).flatMap(map => putStrLn(map.mkString(System.lineSeparator())))
       case _           => putStrLn("Expected name of file to word count!")
     }).exitCode
+  }
 }
