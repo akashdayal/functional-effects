@@ -25,7 +25,14 @@ object SimpleActor extends App {
   def makeActor(initialTemperature: Double): UIO[TemperatureActor] = {
     type Bundle = (Command, Promise[Nothing, Double])
 
-    ???
+    for {
+      ref <- Ref.make(initialTemperature)
+      q   <- Queue.bounded[Bundle](1000)
+      _ <- q.take.flatMap {
+            case (ReadTemperature, promise)         => ref.get.flatMap(promise.succeed)
+            case (AdjustTemperature(temp), promise) => ref.update(_ + temp).flatMap(_ => promise.succeed(temp))
+          }.forever.fork
+    } yield (c: Command) => Promise.make[Nothing, Double].flatMap(p => q.offer(c -> p) *> p.await)
   }
 
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] = {
@@ -33,11 +40,9 @@ object SimpleActor extends App {
 
     (for {
       actor <- makeActor(0)
-      _ <- ZIO.foreachPar(temperatures) { temp =>
-            actor(AdjustTemperature(temp))
-          }
-      temp <- actor(ReadTemperature)
-      _    <- putStrLn(s"Final temperature is ${temp}")
+      _     <- ZIO.foreachPar(temperatures)(temp => actor(AdjustTemperature(temp)))
+      temp  <- actor(ReadTemperature)
+      _     <- putStrLn(s"Final temperature is ${temp}")
     } yield ()).exitCode
   }
 }
@@ -54,7 +59,10 @@ object Hangman extends App {
    * Implement an effect that gets a single, lower-case character from
    * the user.
    */
-  lazy val getChoice: ZIO[Console, IOException, Char] = ???
+  lazy val getChoice: ZIO[Console, IOException, Char] = for {
+    line <- getStrLn
+    c    <- if (line.length != 1) putStrLn("Enter 1 character only") *> getChoice else ZIO.succeed(line.charAt(0))
+  } yield c
 
   /**
    * EXERCISE
@@ -62,7 +70,7 @@ object Hangman extends App {
    * Implement an effect that prompts the user for their name, and
    * returns it.
    */
-  lazy val getName: ZIO[Console, IOException, String] = ???
+  lazy val getName: ZIO[Console, IOException, String] = putStrLn("What is your name?") *> getStrLn
 
   /**
    * EXERCISE
@@ -70,7 +78,8 @@ object Hangman extends App {
    * Implement an effect that chooses a random word from the dictionary.
    * The dictionary is `Dictionary.Dictionary`.
    */
-  lazy val chooseWord: ZIO[Random, Nothing, String] = ???
+  lazy val chooseWord: ZIO[Random, Nothing, String] =
+    nextIntBounded(Dictionary.size).flatMap(id => ZIO.succeed(Dictionary(id)))
 
   /**
    * EXERCISE
@@ -78,7 +87,19 @@ object Hangman extends App {
    * Implement the main game loop, which gets choices from the user until
    * the game is won or lost.
    */
-  def gameLoop(oldState: State): ZIO[Console, IOException, Unit] = ???
+  def gameLoop(oldState: State): ZIO[Console, IOException, Unit] =
+    for {
+      choice      <- renderState(oldState) *> getChoice
+      newState    <- ZIO.succeed(State(oldState.name, oldState.guesses + choice, oldState.word))
+      guessResult = analyzeNewInput(oldState, newState, choice)
+      _ <- guessResult match {
+            case GuessResult.Won       => putStrLn("Victory !!") *> renderState(newState)
+            case GuessResult.Lost      => putStrLn("Defeat...") *> renderState(newState)
+            case GuessResult.Correct   => putStrLn("Correct guess") *> gameLoop(newState)
+            case GuessResult.Incorrect => putStrLn("Bad guess") *> gameLoop(newState)
+            case GuessResult.Unchanged => putStrLn(s"Already tried $choice") *> gameLoop(newState)
+          }
+    } yield ()
 
   def renderState(state: State): ZIO[Console, Nothing, Unit] = {
 
