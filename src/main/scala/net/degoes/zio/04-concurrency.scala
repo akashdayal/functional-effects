@@ -1,6 +1,9 @@
 package net.degoes.zio
 
+import net.degoes.zio.StmLunchTime.Attendee.State
 import zio._
+
+import scala.annotation.tailrec
 
 object ForkJoin extends App {
   import zio.console._
@@ -159,6 +162,26 @@ object ComputePi extends App {
   val randomPoint: ZIO[Random, Nothing, (Double, Double)] =
     nextDouble zip nextDouble
 
+  def pointUpdater(piState: PiState) =
+    for {
+      newPoint <- randomPoint
+      (x, y)   = newPoint
+      _ <- ZIO
+            .succeed(if (insideCircle(x, y)) piState.inside.update(_ + 1))
+            .zipPar(
+              piState.total
+                .update(_ + 1)
+            )
+    } yield ()
+
+  def foreverPrinter(piState: PiState) =
+    (for {
+      inside <- piState.inside.get
+      total  <- piState.total.get
+      _      <- putStrLn(s"Currently $inside:$total - ${estimatePi(inside, total)}")
+      _      <- ZIO.sleep(1 second)
+    } yield ()).forever
+
   /**
    * EXERCISE
    *
@@ -166,7 +189,19 @@ object ComputePi extends App {
    * ongoing estimates continuously until the estimation is complete.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    ???
+    (for {
+      inside  <- Ref.make(0L)
+      total   <- Ref.make(0L)
+      piState = PiState(inside, total)
+      worker  = pointUpdater(piState).forever
+      workers = List.fill(4)(worker)
+      fiber1  <- ZIO.forkAll(workers)
+      fiber2  <- foreverPrinter(piState).fork
+      _       <- putStrLn("Press enter terminate...")
+      _       <- getStrLn
+      _       <- (fiber1 zip fiber2).interrupt
+    } yield ()).exitCode
+
 }
 
 object ParallelZip extends App {
@@ -223,10 +258,27 @@ object StmSwap extends App {
    *
    * Using `STM`, implement a safe version of the swap function.
    */
-  def exampleStm: UIO[Int] = ???
+  def exampleStm: UIO[Int] = {
+    def swap[A](ref1: TRef[A], ref2: TRef[A]): UIO[Unit] =
+      (for {
+        v1 <- ref1.get
+        v2 <- ref2.get
+        _  <- ref2.set(v1)
+        _  <- ref1.set(v2)
+      } yield ()).commit
+
+    for {
+      ref1   <- TRef.make(100).commit
+      ref2   <- TRef.make(0).commit
+      fiber1 <- swap(ref1, ref2).repeatN(100).fork
+      fiber2 <- swap(ref2, ref1).repeatN(100).fork
+      _      <- (fiber1 zip fiber2).join
+      value  <- (ref1.get zipWith ref2.get)(_ + _).commit
+    } yield value
+  }
 
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    exampleRef.map(_.toString).flatMap(putStrLn(_)).exitCode
+    exampleStm.map(_.toString).flatMap(putStrLn(_)).exitCode
 }
 
 object StmLock extends App {
@@ -240,11 +292,24 @@ object StmLock extends App {
    * acquisition, and release methods.
    */
   class Lock private (tref: TRef[Boolean]) {
-    def acquire: UIO[Unit] = ???
-    def release: UIO[Unit] = ???
+    def acquire: UIO[Unit] = STM.atomically {
+      for {
+        locked <- tref.get
+        _      <- STM.check(!locked)
+        _      <- tref.update(!_)
+      } yield ()
+    }
+
+    def release: UIO[Unit] = STM.atomically {
+      for {
+        locked <- tref.get
+        _      <- STM.check(locked)
+        _      <- tref.update(!_)
+      } yield ()
+    }
   }
   object Lock {
-    def make: UIO[Lock] = ???
+    def make: UIO[Lock] = TRef.make(false).map(new Lock(_)).commit
   }
 
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
@@ -273,18 +338,34 @@ object StmQueue extends App {
    * Using STM, implement a async queue with double back-pressuring.
    */
   class Queue[A] private (capacity: Int, queue: TRef[ScalaQueue[A]]) {
-    def take: UIO[A]           = ???
-    def offer(a: A): UIO[Unit] = ???
+    def take: UIO[A] = STM.atomically {
+      for {
+        q <- queue.get
+        x <- q.dequeueOption match {
+              case None          => STM.retry
+              case Some((a, as)) => queue.set(as) *> STM.succeed(a)
+            }
+      } yield (x)
+    }
+
+    def offer(a: A): UIO[Unit] = STM.atomically {
+      for {
+        q <- queue.get
+        _ <- STM.check(q.size > capacity)
+        _ <- queue.update(_.enqueue(a))
+      } yield ()
+    }
   }
+
   object Queue {
-    def bounded[A](capacity: Int): UIO[Queue[A]] = ???
+    def bounded[A](capacity: Int): UIO[Queue[A]] = TRef.make(ScalaQueue.empty[A]).commit.map(new Queue[A](capacity, _))
   }
 
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
     for {
       queue <- Queue.bounded[Int](10)
-      _     <- ZIO.foreach(0 to 100)(i => queue.offer(i)).fork
-      _     <- ZIO.foreach(0 to 100)(_ => queue.take.flatMap(i => putStrLn(s"Got: ${i}")))
+      _     <- ZIO.foreach((0 to 100).toList)(i => queue.offer(i)).fork
+      _     <- ZIO.foreach((0 to 100).toList)(_ => queue.take.flatMap(i => putStrLn(s"Got: ${i}")))
     } yield ExitCode.success
 }
 
@@ -498,7 +579,7 @@ object StmDiningPhilosophers extends App {
     left: TRef[Option[Fork]],
     right: TRef[Option[Fork]]
   ): STM[Nothing, (Fork, Fork)] =
-    ???
+    left.get.collect { case Some(fork) => fork } zip right.get.collect { case Some(fork) => fork }
 
   /**
    * EXERCISE
@@ -507,13 +588,19 @@ object StmDiningPhilosophers extends App {
    */
   def putForks(left: TRef[Option[Fork]], right: TRef[Option[Fork]])(
     tuple: (Fork, Fork)
-  ): STM[Nothing, Unit] = ???
+  ): STM[Nothing, Unit] = {
+    val (leftFork, rightFork) = tuple
+    for {
+      _ <- left.set(Some(leftFork))
+      _ <- right.set(Some(rightFork))
+    } yield ()
+  }
 
   def setupTable(size: Int): ZIO[Any, Nothing, Roundtable] = {
     val makeFork = TRef.make[Option[Fork]](Some(Fork))
 
     (for {
-      allForks0 <- STM.foreach(0 to size)(i => makeFork)
+      allForks0 <- STM.foreach((0 to size).toList)(_ => makeFork)
       allForks  = allForks0 ++ List(allForks0(0))
       placements = (allForks zip allForks.drop(1)).map {
         case (l, r) => Placement(l, r)
