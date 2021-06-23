@@ -1,15 +1,18 @@
 package net.degoes.zio
 
+import zio.Schedule.forever
 import zio._
 
 object Retry {
+  import zio.console._
+  import zio.duration._
 
   /**
    * EXERCISE
    *
    * Using `Schedule.recurs`, create a schedule that recurs 5 times.
    */
-  val fiveTimes: Schedule[Any, Any, Int] = ???
+  val fiveTimes: Schedule[Any, Any, Int] = Schedule.recurs(5).map(_.toInt)
 
   /**
    * EXERCISE
@@ -17,14 +20,14 @@ object Retry {
    * Using the `ZIO.repeat`, repeat printing "Hello World" five times to the
    * console.
    */
-  val repeated1 = ???
+  val repeated1 = putStrLn("Hello World").repeat(fiveTimes)
 
   /**
    * EXERCISE
    *
    * Using `Schedule.spaced`, create a schedule that recurs forever every 1 second.
    */
-  val everySecond = ???
+  val everySecond = Schedule.spaced(1 second)
 
   /**
    * EXERCISE
@@ -33,7 +36,7 @@ object Retry {
    * and the `everySecond` schedule, create a schedule that repeats fives times,
    * evey second.
    */
-  val fiveTimesEverySecond = ???
+  val fiveTimesEverySecond = fiveTimes && everySecond
 
   /**
    * EXERCISE
@@ -41,7 +44,7 @@ object Retry {
    * Using the `ZIO#repeat`, repeat the action putStrLn("Hi hi") using
    * `fiveTimesEverySecond`.
    */
-  val repeated2 = ???
+  val repeated2 = putStrLn("Hi hi").repeat(fiveTimesEverySecond)
 
   /**
    * EXERCISE
@@ -50,7 +53,7 @@ object Retry {
    * schedule, create a schedule that repeats fives times rapidly, and then
    * repeats every second forever.
    */
-  val fiveTimesThenEverySecond = ???
+  val fiveTimesThenEverySecond = fiveTimes andThen everySecond
 
   /**
    * EXERCISE
@@ -58,7 +61,7 @@ object Retry {
    * Using `ZIO#retry`, retry the following error a total of five times.
    */
   val error1   = IO.fail("Uh oh!")
-  val retried5 = ???
+  val retried5 = error1.retry(fiveTimes)
 
   /**
    * EXERCISE
@@ -67,7 +70,7 @@ object Retry {
    * schedule, create a schedule that repeats the minimum of five times and
    * every second.
    */
-  val fiveTimesOrEverySecond = ???
+  val fiveTimesOrEverySecond = fiveTimes || everySecond
 
   /**
    * EXERCISE
@@ -75,16 +78,16 @@ object Retry {
    * Using `Schedule.exponential`, create an exponential schedule that starts
    * from 10 milliseconds.
    */
-  val exponentialSchedule = ???
+  val exponentialSchedule = Schedule.exponential(10 millis)
 
-  // (effect orElse otherService).retry(exponentialSchedule).timeout(60.seconds)
+//   (effect orElse otherService).retry(exponentialSchedule).timeout(60.seconds)
 
   /**
    * EXERCISE
    *
    * Using `Schedule.jittered` produced a jittered version of `exponentialSchedule`.
    */
-  val jitteredExponential = ???
+  val jitteredExponential = exponentialSchedule.jittered
 
   /**
    * EXERCISE
@@ -92,7 +95,7 @@ object Retry {
    * Using `Schedule.whileOutput`, produce a filtered schedule from `Schedule.forever`
    * that will halt when the number of recurrences exceeds 100.
    */
-  val oneHundred = ???
+  val oneHundred = Schedule.forever.whileOutput(_ < 100)
 
   /**
    * EXERCISE
@@ -100,7 +103,7 @@ object Retry {
    * Using `Schedule.identity`, produce a schedule that recurs forever, without delay,
    * returning its inputs.
    */
-  def inputs[A]: Schedule[Any, A, A] = ???
+  def inputs[A]: Schedule[Any, A, A] = Schedule.identity.forever
 
   /**
    * EXERCISE
@@ -108,7 +111,7 @@ object Retry {
    * Using `Schedule#collect`, produce a schedule that recurs forever, collecting its
    * inputs into a list.
    */
-  def collectedInputs[A]: Schedule[Any, A, List[A]] = ???
+  def collectedInputs[A]: Schedule[Any, A, List[A]] = Schedule.identity.collectAll.map(_.toList)
 
   /**
    * EXERCISE
@@ -116,7 +119,7 @@ object Retry {
    * Using  `*>` (`zipRight`), combine `fiveTimes` and `everySecond` but return
    * the output of `everySecond`.
    */
-  val fiveTimesEverySecondR = ???
+  val fiveTimesEverySecondR = fiveTimes *> everySecond
 
   /**
    * EXERCISE
@@ -128,6 +131,12 @@ object Retry {
    * the schedule.
    */
   import zio.random.Random
-  import Schedule.{ collectAll, exponential, fixed, recurs }
-  def mySchedule[A]: Schedule[ZEnv, A, List[A]] = ???
+  import Schedule._
+  def mySchedule[A]: Schedule[ZEnv, A, List[A]] = {
+    val first = exponential(10 millis).whileOutput(_ < 60.seconds)
+
+    val second = fixed(60 seconds).whileOutput(_ < 100)
+
+    (first andThen second).jittered *> identity[A].collectAll.map(_.toList)
+  }
 }
