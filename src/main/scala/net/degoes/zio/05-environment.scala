@@ -59,13 +59,15 @@ object ProvideEnvironment extends App {
    */
   def run(args: List[String]) = {
     val config = Config("localhost", 7878)
+    val dbConn = DatabaseConnection()
 
-    ???
+    (getServer.provide(config) zip useDatabaseConnection.provide(dbConn)).exitCode
   }
 }
 
 object CakeEnvironment extends App {
   import zio.console._
+  import zio.blocking._
   import java.io.IOException
 
   type MyFx = Logging with Files
@@ -104,7 +106,16 @@ object CakeEnvironment extends App {
    */
   def run(args: List[String]) =
     effect
-      .provide(???)
+      .provide(new Logging with Files {
+        override val logging: Logging.Service = new Logging.Service {
+          override def log(line: String): UIO[Unit] = Console.Service.live.putStrLn(line)
+        }
+        override val files: Files.Service = new Files.Service {
+          override def read(file: String): IO[IOException, String] =
+            Blocking.Service.live
+              .blocking(ZIO.succeed(scala.io.Source.fromFile(file).getLines().mkString(System.lineSeparator())))
+        }
+      })
       .exitCode
 }
 
@@ -136,7 +147,7 @@ object HasMap extends App {
    * Using the `++` operator on `Has`, combine the three maps (`hasLogging`, `hasDatabase`, and
    * `hasCache`) into a single map that has all three objects.
    */
-  val allThree: Has[Database] with Has[Cache] with Has[Logging] = ???
+  val allThree: Has[Database] with Has[Cache] with Has[Logging] = hasLogging ++ hasDatabase ++ hasCache
 
   /**
    * EXERCISE
@@ -146,9 +157,9 @@ object HasMap extends App {
    * parameter, as it cannot be inferred (the map needs to know which of the objects you want to
    * retrieve, and that can be specified only by type).
    */
-  lazy val logging  = ???
-  lazy val database = ???
-  lazy val cache    = ???
+  lazy val logging  = allThree.get[Logging]
+  lazy val database = allThree.get[Database]
+  lazy val cache    = allThree.get[Cache]
 
   def run(args: List[String]) = ???
 }
@@ -187,7 +198,10 @@ object LayerEnvironment extends App {
      * Using `ZLayer.succeed`, create a layer that implements the `Files`
      * service.
      */
-    val live: ZLayer[Blocking, Nothing, Files] = ???
+    val live: ZLayer[Blocking, Nothing, Files] = ZLayer.succeed(new Service {
+      override def read(file: String): IO[IOException, String] =
+        ZIO(scala.io.Source.fromFile(file).getLines().mkString(System.lineSeparator())).orDie
+    })
 
     def read(file: String) = ZIO.accessM[Files](_.get.read(file))
   }
@@ -204,7 +218,11 @@ object LayerEnvironment extends App {
      * Using `ZLayer.fromFunction`, create a layer that requires `Console`
      * and uses the console to provide a logging service.
      */
-    val live: ZLayer[Console, Nothing, Logging] = ???
+    val live: ZLayer[Console, Nothing, Logging] = ZLayer.fromFunction(c =>
+      new Logging.Service {
+        override def log(line: String): UIO[Unit] = c.get.putStrLn(line)
+      }
+    )
 
     def log(line: String) = ZIO.accessM[Logging](_.get.log(line))
   }
@@ -224,8 +242,8 @@ object LayerEnvironment extends App {
      * You will have to build a value (the environment) of the required type
      * (`Files with Logging`).
      */
-    val env: ZLayer[Console, Nothing, Files with Logging] =
-      ???
+    val env: ZLayer[Blocking with Console, Nothing, Files with Logging] =
+      Files.live ++ Logging.live
 
     effect
       .provideCustomLayer(env)
