@@ -13,7 +13,7 @@ object AccessEnvironment extends App {
    * Using `ZIO.access`, access a `Config` type from the environment, and
    * extract the `server` field from it.
    */
-  val accessServer: ZIO[Config, Nothing, String] = ???
+  val accessServer: ZIO[Config, Nothing, String] = ZIO.access[Config](_.server)
 
   /**
    * EXERCISE
@@ -21,7 +21,7 @@ object AccessEnvironment extends App {
    * Using `ZIO.access`, access a `Config` type from the environment, and
    * extract the `port` field from it.
    */
-  val accessPort: ZIO[Config, Nothing, Int] = ???
+  val accessPort: ZIO[Config, Nothing, Int] = ZIO.access[Config](_.port)
 
   def run(args: List[String]) = {
     val config = Config("localhost", 7878)

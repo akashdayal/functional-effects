@@ -381,9 +381,13 @@ object StmLunchTime extends App {
   final case class Attendee(state: TRef[Attendee.State]) {
     import Attendee.State._
 
-    def isStarving: STM[Nothing, Boolean] = ???
+    def isStarving: STM[Nothing, Boolean] =
+      state.get.map {
+        case Starving => true
+        case Full     => false
+      }
 
-    def feed: STM[Nothing, Unit] = ???
+    def feed: STM[Nothing, Unit] = state.set(Full)
   }
   object Attendee {
     sealed trait State
@@ -408,9 +412,19 @@ object StmLunchTime extends App {
         }
         .map(_._2)
 
-    def takeSeat(index: Int): STM[Nothing, Unit] = ???
+    def takeSeat(index: Int): STM[Nothing, Unit] =
+      for {
+        seat <- seats(index)
+        _    <- STM.check(!seat)
+        _    <- seats.update(index, _ => true)
+      } yield ()
 
-    def vacateSeat(index: Int): STM[Nothing, Unit] = ???
+    def vacateSeat(index: Int): STM[Nothing, Unit] =
+      for {
+        seat <- seats(index)
+        _    <- STM.check(seat)
+        _    <- seats.update(index, _ => false)
+      } yield ()
   }
 
   /**
@@ -418,7 +432,11 @@ object StmLunchTime extends App {
    *
    * Using STM, implement a method that feeds a single attendee.
    */
-  def feedAttendee(t: Table, a: Attendee): STM[Nothing, Unit] = ???
+  def feedAttendee(t: Table, a: Attendee): STM[Nothing, Unit] =
+    for {
+      seat <- t.findEmptySeat.collect { case Some(seat) => seat }
+      _    <- t.takeSeat(seat) *> a.feed *> t.vacateSeat(seat)
+    } yield ()
 
   /**
    * EXERCISE
@@ -426,14 +444,19 @@ object StmLunchTime extends App {
    * Using STM, implement a method that feeds only the starving attendees.
    */
   def feedStarving(table: Table, attendees: Iterable[Attendee]): UIO[Unit] =
-    ???
+    ZIO.foreachPar_(attendees) { attendee =>
+      (for {
+        starving <- attendee.isStarving
+        _        <- if (starving) feedAttendee(table, attendee) else STM.succeed()
+      } yield ()).commit
+    }
 
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] = {
     val Attendees = 100
     val TableSize = 5
 
     for {
-      attendees <- ZIO.foreach(0 to Attendees)(i =>
+      attendees <- ZIO.foreach((0 to Attendees).toList)(i =>
                     TRef
                       .make[Attendee.State](Attendee.State.Starving)
                       .map(Attendee(_))
